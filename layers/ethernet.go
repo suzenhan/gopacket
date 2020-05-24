@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"github.com/google/gopacket"
 	"net"
+	"sync"
 )
 
 // EthernetBroadcast is the broadcast MAC address used by Ethernet.
@@ -29,6 +30,10 @@ type Ethernet struct {
 	// former is the case, we set EthernetType and Length stays 0.  In the latter
 	// case, we set Length and EthernetType = EthernetTypeLLC.
 	Length uint16
+}
+
+func (t *Ethernet) Garbage() {
+	EthernetSyncPool.Put(t)
 }
 
 // LayerType returns LayerTypeEthernet
@@ -111,8 +116,16 @@ func (eth *Ethernet) NextLayerType() gopacket.LayerType {
 	return eth.EthernetType.LayerType()
 }
 
+var EthernetSyncPool = sync.Pool{
+	New: func() interface{} {
+		return &Ethernet{}
+	},
+}
+var ZeroEthernet = Ethernet{}
+
 func decodeEthernet(data []byte, p gopacket.PacketBuilder) error {
-	eth := &Ethernet{}
+	eth := EthernetSyncPool.Get().(*Ethernet)
+	*eth = ZeroEthernet
 	err := eth.DecodeFromBytes(data, p)
 	if err != nil {
 		return err

@@ -14,6 +14,7 @@ import (
 	"fmt"
 
 	"github.com/google/gopacket"
+	"sync"
 )
 
 // TCP is the layer for TCP headers.
@@ -32,6 +33,10 @@ type TCP struct {
 	Padding                                    []byte
 	opts                                       [4]TCPOption
 	tcpipchecksum
+}
+
+func (t *TCP) Garbage() {
+	TCPSyncPool.Put(t)
 }
 
 // TCPOptionKind represents a TCP option code.
@@ -309,8 +314,16 @@ func (t *TCP) NextLayerType() gopacket.LayerType {
 	return lt
 }
 
+var TCPSyncPool = sync.Pool{
+	New: func() interface{} {
+		return &TCP{}
+	},
+}
+var ZeroTCP = TCP{}
+
 func decodeTCP(data []byte, p gopacket.PacketBuilder) error {
-	tcp := &TCP{}
+	tcp := TCPSyncPool.Get().(*TCP)
+	*tcp = ZeroTCP
 	err := tcp.DecodeFromBytes(data, p)
 	p.AddLayer(tcp)
 	p.SetTransportLayer(tcp)

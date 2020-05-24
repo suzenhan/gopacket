@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 
 	"github.com/google/gopacket"
 )
@@ -56,6 +57,10 @@ type IPv4 struct {
 	DstIP      net.IP
 	Options    []IPv4Option
 	Padding    []byte
+}
+
+func (t *IPv4) Garbage() {
+	IPv4SyncPool.Put(t)
 }
 
 // LayerType returns LayerTypeIPv4
@@ -285,8 +290,16 @@ func (i *IPv4) NextLayerType() gopacket.LayerType {
 	return i.Protocol.LayerType()
 }
 
+var IPv4SyncPool = sync.Pool{
+	New: func() interface{} {
+		return &IPv4{}
+	},
+}
+var ZeroIPv4 = IPv4{}
+
 func decodeIPv4(data []byte, p gopacket.PacketBuilder) error {
-	ip := &IPv4{}
+	ip := IPv4SyncPool.Get().(*IPv4)
+	*ip = ZeroIPv4
 	err := ip.DecodeFromBytes(data, p)
 	p.AddLayer(ip)
 	p.SetNetworkLayer(ip)

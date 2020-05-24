@@ -19,6 +19,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"sync"
 )
 
 // CaptureInfo provides standardized information about a packet captured off
@@ -97,6 +98,7 @@ type Packet interface {
 	Data() []byte
 	// Metadata returns packet metadata associated with this packet.
 	Metadata() *PacketMetadata
+	Garbage()
 }
 
 // packet contains all the information we need to fulfill the Packet interface,
@@ -434,6 +436,9 @@ type eagerPacket struct {
 
 var errNilDecoder = errors.New("NextDecoder passed nil decoder, probably an unsupported decode type")
 
+func (p *eagerPacket) Garbage() {
+}
+
 func (p *eagerPacket) NextDecoder(next Decoder) error {
 	if next == nil {
 		return errNilDecoder
@@ -499,6 +504,10 @@ func (p *eagerPacket) Dump() string   { return p.packetDump() }
 type lazyPacket struct {
 	packet
 	next Decoder
+}
+
+func (p *lazyPacket) Garbage() {
+	LazyPacketSyncPool.Put(p)	
 }
 
 func (p *lazyPacket) NextDecoder(next Decoder) error {
@@ -648,6 +657,12 @@ var NoCopy = DecodeOptions{NoCopy: true}
 // DecodeStreamsAsDatagrams is a DecodeOptions with just DecodeStreamsAsDatagrams set.
 var DecodeStreamsAsDatagrams = DecodeOptions{DecodeStreamsAsDatagrams: true}
 
+var LazyPacketSyncPool = sync.Pool{New: func() interface{} {
+	return &lazyPacket{}
+}}
+
+var ZeroLazyPacket = lazyPacket{}
+
 // NewPacket creates a new Packet object from a set of bytes.  The
 // firstLayerDecoder tells it how to interpret the first layer from the bytes,
 // future layers will be generated from that first layer automatically.
@@ -658,11 +673,12 @@ func NewPacket(data []byte, firstLayerDecoder Decoder, options DecodeOptions) Pa
 		data = dataCopy
 	}
 	if options.Lazy {
-		p := &lazyPacket{
-			packet: packet{data: data, decodeOptions: options},
-			next:   firstLayerDecoder,
-		}
+		p := LazyPacketSyncPool.Get().(*lazyPacket)
+		*p = ZeroLazyPacket
+		p.packet = packet{data: data, decodeOptions: options}
+		p.next = firstLayerDecoder
 		p.layers = p.initialLayers[:0]
+		
 		// Crazy craziness:
 		// If the following return statemet is REMOVED, and Lazy is FALSE, then
 		// eager packet processing becomes 17% FASTER.  No, there is no logical
